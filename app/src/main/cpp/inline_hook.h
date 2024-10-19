@@ -7,6 +7,8 @@
 
 
 #include <asm-generic/types.h>
+#include <iostream>
+#include "comm.h"
 union my_neon_regs {
     long double qregs[32];
     double dregs[32][2];
@@ -22,19 +24,29 @@ struct my_pt_regs {
     __u64 pc;
 
 };
-class HkInfo{
-    void* bHookFuncAddr;
 
-};
 
+class HkInfo {
+public:
+    void *bHookFuncAddr;
+    void *hookFuncAddr;
+    void (*onPreCallBack)(struct my_pt_regs *, HkInfo *pInfo);
+    void (*onCallBack)(struct my_pt_regs *, HkInfo *pInfo);
+    std::string methodName;
+    int backupFixInstLength[6]; //备份6条指令
+    BYTE szbyBackupOpcodes[24];
+    long shellcodeLength;
+    void** hkInfo;
+    void* pStubShellCodeAddr;
+    void *pNewEntryForOriFuncAddr;          //和pOriFuncAddr一致
+} HkInfoAlias;
 
 typedef void (*onPreCallBack)(struct my_pt_regs *, HkInfo *pInfo);
 
-typedef  void (*onCallBack)(struct my_pt_regs *,  HkInfo *pInfo);
+typedef void (*onCallBack)(struct my_pt_regs *, HkInfo *pInfo);
 
-
-void hook(void* bHookFuncAddr,onPreCallBack onPreCallBackFunc,onCallBack onCallBackFunc, const char* methodName);
-
+void hook(void *bHookFuncAddr, onPreCallBack onPreCallBackFunc, onCallBack onCallBackFunc,
+          const char *methodName);
 
 
 #endif //INLINEHOOK_FINAL_INLINE_HOOK_H
