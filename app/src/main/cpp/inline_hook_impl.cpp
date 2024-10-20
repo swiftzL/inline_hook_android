@@ -183,6 +183,13 @@ void build_replace(HkInfo* info){
     info->pStubShellCodeAddr = newShellCode;
 }
 
+bool isTargetAddrInBackup(uint64_t target_addr, uint64_t hook_addr, int backup_length)
+{
+    if((target_addr<=hook_addr+backup_length)&&(target_addr>=hook_addr))
+        return true;
+    return false;
+}
+//pc 当前代码段地址
 int fixPCOpcodeInstrucArm64(uint64_t pc, uint64_t lr, uint32_t instruction, uint32_t *trampoline_instructions, HkInfo* pstInlineHook)
 {
     int type;
@@ -204,21 +211,18 @@ int fixPCOpcodeInstrucArm64(uint64_t pc, uint64_t lr, uint32_t instruction, uint
         uint32_t imm19;
         uint64_t value;
 
-        imm19 = (instruction & 0xFFFFE0) >> 5; //1110 1000
-        value = pc + imm19*4;
-        if((imm19>>18)==1){
-            value = pc - 4*(0x7ffff-imm19+1);
-        }
-        if(isTargetAddrInBackup(value, (uint64_t)pstInlineHook->pBeHookAddr, pstInlineHook->backUpLength)){
-            //backup to backup
-            //B.COND ???
-            //B 28
-            int target_idx = (int)((value - (uint64_t)pstInlineHook->pBeHookAddr)/4);
-            int bc_ins_idx = (int)((pc - (uint64_t)pstInlineHook->pBeHookAddr)/4);
+        imm19 = (instruction & 0xFFFFE0) >> 5; //8 19 1 4
+        value = pc + imm19*4;//实际地址
+        if((imm19>>18)==1){//负数说明跳转上面
+            value = pc - 4*(0x7ffff-imm19+1);//0111 1111 24位
+        }//-5 1
+        if(isTargetAddrInBackup(value, (uint64_t)pstInlineHook->bHookFuncAddr, 24)){//目标地址在备份中
+            int target_idx = (int)((value - (uint64_t)pstInlineHook->bHookFuncAddr)/4);
+            int bc_ins_idx = (int)((pc - (uint64_t)pstInlineHook->bHookFuncAddr)/4);
             int idx = 0;
             int gap = 0;
             for(idx=bc_ins_idx+1;idx<target_idx;idx++){
-                gap += pstInlineHook->backUpFixLengthList[idx];
+                gap += pstInlineHook->backupFixInstLength[idx];
             }
             trampoline_instructions[trampoline_pos++] = (instruction & 0xff00000f) + ((gap+32)<<3); // B.XX 32+gap
             trampoline_instructions[trampoline_pos++] = 0x14000007; //B 28

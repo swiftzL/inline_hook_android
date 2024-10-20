@@ -23,7 +23,7 @@ Java_com_r0ysue_inlinehook_1final_MainActivity_stringFromJNI(
 //    long* base= static_cast<long *>(findsobase("libart.so"));
     __android_log_print(6,"r0ysue-linker","linker-2");
 
-//    int off=findsym("/system/lib64/libart.so","_ZN3art11ClassLinker10LoadMethodERKNS_7DexFileERKNS_21ClassDataItemIteratorENS_6HandleINS_6mirror5ClassEEEPNS_9ArtMethodE");
+//    int off=findsym("/system/lib64/libart.so","_ZN3art11ClassLinker10LoadMethodE6RKNS_7DexFileERKNS_21ClassDataItemIteratorENS_6HandleINS_6mirror5ClassEEEPNS_9ArtMethodE");
 //    long* addr= reinterpret_cast<long *>((char *) base + off );
 //    __android_log_print(6,"r0ysue-libart","%p",addr);
 
