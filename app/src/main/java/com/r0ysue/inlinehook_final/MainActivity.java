@@ -21,6 +21,8 @@ public class MainActivity extends AppCompatActivity {
         // Example of a call to a native method
         TextView tv = findViewById(R.id.sample_text);
         tv.setText("dd");
+        stringFromJNI1();
+        stringFromJNI1();
         View viewById = findViewById(R.id.button1);
         viewById.setOnClickListener(e->{
             stringFromJNI();
@@ -34,4 +36,6 @@ public class MainActivity extends AppCompatActivity {
      * which is packaged with this application.
      */
     public native String stringFromJNI();
+
+    public native String stringFromJNI1();
 }

@@ -10,6 +10,11 @@
 #define LE(fmt, args...) __android_log_print(5, "hooks", fmt, ##args);
 #define BYTE unsigned char
 
+#define MY_PAGE_START(addr, page_size)	(~(page_size - 1) & (addr))                  //1111 0000       0000 1000-1 0000 0111
+#define MY_PAGE_END(addr, page_size)   (((addr) + page_size - 1) & ~(page_size - 1)) //
+
+void dump(void *addr);
+
 enum INSTRUCTION_TYPE {
 
 

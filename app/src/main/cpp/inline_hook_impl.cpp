@@ -16,8 +16,8 @@ static std::vector<HkInfo *> infos;
 static std::mutex info_mutex;
 
 extern unsigned long replace_start;
-extern unsigned long p_hk_info;
 extern unsigned long replace_end;
+extern unsigned  long call_addr;
 
 
 static void add(HkInfo *info) {
@@ -31,40 +31,12 @@ static void add(HkInfo *info) {
     infos.push_back(info);
 }
 
-/*static*/ void
-default_onPreCallBack(my_pt_regs *regs, HkInfo *pInfo) //参数regs就是指向栈上的一个数据结构，由第二部分的mov r0, sp所传递。
-{
-    const char *name = "null";
-    if (pInfo) {
-        name = pInfo->methodName.c_str();
-    }
-    LE("tid=%d, onPreCallBack:%s, "
-       "x0=0x%llx, x1=0x%llx, x2=0x%llx, x3=0x%llx, x4=0x%llx, x5=0x%llx, x6=0x%llx, x7=0x%llx, x8=0x%llx, x9=0x%llx, x10=0x%llx,"
-       " x11=0x%llx, x12=0x%llx, x13=0x%llx, x14=0x%llx, x15=0x%llx, x16=0x%llx, x17=0x%llx, x18=0x%llx, x19=0x%llx, x20=0x%llx, "
-       "x21=0x%llx, x22=0x%llx, x23=0x%llx, x24=0x%llx, x25=0x%llx, x26=0x%llx, x27=0x%llx, x28=0x%llx, x29/FP=0x%llx, x30/LR=0x%llx, "
-       "cur_sp=%p, ori_sp=%p, ori_sp/31=0x%llx, NZCV/32=0x%llx, x0/pc/33=0x%llx, cur_pc=%llx, arg8=%x, arg9=%x, arg10=%x, arg11=%x, "
-       "arg12=%x, arg13=%x;", gettid(), name,
-       regs->uregs[0], regs->uregs[1], regs->uregs[2], regs->uregs[3], regs->uregs[4],
-       regs->uregs[5],
-       regs->uregs[6], regs->uregs[7], regs->uregs[8], regs->uregs[9], regs->uregs[10],
-       regs->uregs[11],
-       regs->uregs[12], regs->uregs[13], regs->uregs[14], regs->uregs[15], regs->uregs[16],
-       regs->uregs[17],
-       regs->uregs[18], regs->uregs[19], regs->uregs[20], regs->uregs[21], regs->uregs[22],
-       regs->uregs[23],
-       regs->uregs[24], regs->uregs[25], regs->uregs[26], regs->uregs[27], regs->uregs[28],
-       regs->uregs[29], regs->uregs[30],
-       regs, /*((char*)regs + 0x110)*/((char *) regs + 0x310), regs->uregs[31], regs->uregs[32],
-       regs->uregs[33], regs->pc,
-       SP(0), SP(1), SP(2), SP(3), SP(4), SP(5)
-    );
-}
 
 
 
 static int getTypeInArm64(uint32_t instruction)
 {
-    if ((instruction & 0x9F000000) == 0x10000000) { //1001 1111
+    if ((instruction & 0x9F000000) == 0x10000000) { //1001 1111 = 0001 0000
         LE("is ADR_ARM64");
         return ADR_ARM64;
     }
@@ -140,6 +112,7 @@ int lengthFixArm64(uint32_t opcode)
         case MOV_ARM:return 12;break;
         case UNDEFINE:return 4;
     }
+    return 0;
 }
 
 
@@ -160,10 +133,18 @@ bool InitArmHookInfo(HkInfo *pInfo) {
     return true;
 }
 
+void dump(void *addr) {
+    __android_log_print(6, "r0ysue", "dump addr is %p", addr);
+    for (int i = 0; i <= 24; i++) {
+        __android_log_print(6, "r0ysue", "dump   %x", *((char*)addr + i));
+    }
+}
+
 void build_replace(HkInfo* info){
     void *p_shellcode_start_s = &replace_start;
     void *p_shellcode_end_s = &replace_end;
-    void *t_hk_info = &p_hk_info;
+    LE("shellcode _start %p",p_shellcode_start_s);
+    LE("shellcode _end %p",p_shellcode_end_s);
     long shellCodeSize = reinterpret_cast<long>(p_shellcode_end_s) - reinterpret_cast<long>(p_shellcode_start_s);
     info->shellcodeLength = shellCodeSize;
     LE("shell code length is %ld",info->shellcodeLength);
@@ -175,12 +156,10 @@ void build_replace(HkInfo* info){
         return;
     }
     memcpy(newShellCode,p_shellcode_start_s,info->shellcodeLength);
-    mprotect((void *) (newShellCode), pageSize, PROT_READ | PROT_WRITE | PROT_EXEC);
-    info->hkInfo = reinterpret_cast<void **>(reinterpret_cast<long>(newShellCode) +
-                                             (reinterpret_cast<long>(t_hk_info) -
-                                              reinterpret_cast<long >(p_shellcode_start_s)));
-    *(info->hkInfo) = info;
+    memcpy((void*)((char*)newShellCode+info->shellcodeLength-8),&info->hookFuncAddr,8);
+    ChangePageProperty(newShellCode,pageSize);
     info->pStubShellCodeAddr = newShellCode;
+    LE("p stub shell coder addr is %p",info->pStubShellCodeAddr);
 }
 
 bool isTargetAddrInBackup(uint64_t target_addr, uint64_t hook_addr, int backup_length)
@@ -194,8 +173,6 @@ int fixPCOpcodeInstrucArm64(uint64_t pc, uint64_t lr, uint32_t instruction, uint
 {
     int type;
     int trampoline_pos;
-    uint32_t new_entry_addr = (uint32_t)pstInlineHook->pNewEntryForOriFuncAddr;
-    LE("new_entry_addr : %x",new_entry_addr);
     trampoline_pos = 0;
     LE("THE ARM64 OPCODE IS %x",instruction);
     type = getTypeInArm64(instruction);
@@ -242,34 +219,25 @@ int fixPCOpcodeInstrucArm64(uint64_t pc, uint64_t lr, uint32_t instruction, uint
 
         return 4*trampoline_pos;
     }
-    if (type == ADR_ARM64) {
-        //LDR Rn, 4
-        //PC+imm*4
-        LOGI("ADR_ARM64");
+    if (type == ADR_ARM64) {//0x10
+       //adr x1,4 //0001 0x10
         uint32_t imm21;
         uint64_t value;
         uint32_t rd;
+        //               1110 0000                                       0110 0000
         imm21 = ((instruction & 0xFFFFE0)>>3) + ((instruction & 0x60000000)>>29);
         value = pc + 4*imm21;
         if((imm21 & 0x100000)==0x100000)
         {
-            LOGI("NEG");
             value = pc - 4 * (0x1fffff - imm21 + 1);
         }
-        LOGI("value : %x",value);
-
-        rd = instruction & 0x1f;
+        rd = instruction & 0x1f; //寄存器位置
         trampoline_instructions[trampoline_pos++] = 0x58000020+rd; // ldr rd, 4
         trampoline_instructions[trampoline_pos++] = (uint32_t)(value >> 32);
         trampoline_instructions[trampoline_pos++] = (uint32_t)(value & 0xffffffff);
-
         return 4*trampoline_pos;
     }
     if (type == ADRP_ARM64) {
-        //LDR Rn, 8
-        //B 12
-        //PC+imm*4096
-        LOGI("ADRP_ARM64");
         uint32_t imm21;
         uint64_t value;
         uint32_t rd;
@@ -277,15 +245,8 @@ int fixPCOpcodeInstrucArm64(uint64_t pc, uint64_t lr, uint32_t instruction, uint
         value = (pc & 0xfffffffffffff000) + 4096*imm21;
         if((imm21 & 0x100000)==0x100000)
         {
-            LOGI("NEG");
             value = (pc & 0xfff) - 4096 * (0x1fffff - imm21 + 1);
         }
-        LOGI("pc    : %lx",pc);
-        LOGI("imm21 : %x",imm21);
-        LOGI("value : %lx",value);
-        LOGI("valueh : %x",(uint32_t)(value >> 32));
-        LOGI("valuel : %x",(uint32_t)(value & 0xffffffff));
-
         rd = instruction & 0x1f;
         trampoline_instructions[trampoline_pos++] = 0x58000040+rd; // ldr rd, 8
         trampoline_instructions[trampoline_pos++] = 0x14000003; // b 12
@@ -302,7 +263,6 @@ int fixPCOpcodeInstrucArm64(uint64_t pc, uint64_t lr, uint32_t instruction, uint
         //LDR Xn, [sp, #-0x8]
         //B 8
         //PC+imm*4
-        LOGI("LDR_ARM64");
         uint32_t imm19;
         uint64_t value;
         uint32_t rt;
@@ -316,7 +276,7 @@ int fixPCOpcodeInstrucArm64(uint64_t pc, uint64_t lr, uint32_t instruction, uint
                 break;
             }
         }
-        LOGI("Rn : %d",rn);
+
         imm19 = ((instruction & 0xFFFFE0)>>5);
         trampoline_instructions[trampoline_pos++] = 0xa93f03e0 + rt + (rn << 10); //STP Xt, Xn, [SP, #-0x10]
         trampoline_instructions[trampoline_pos++] = 0x58000080 + rn; //LDR Xn, 16
@@ -343,7 +303,7 @@ int fixPCOpcodeInstrucArm64(uint64_t pc, uint64_t lr, uint32_t instruction, uint
         imm26 = instruction & 0xFFFFFF;
         value = pc + imm26*4;
         target_ins = *((uint32_t *)value);
-        LOGI("%p, target_ins : %x",value, target_ins);
+
 
         trampoline_instructions[trampoline_pos++] = 0x5800007E; //LDR LR, 12
         trampoline_instructions[trampoline_pos++] = 0xD63F03C0; //BLR LR
@@ -361,8 +321,6 @@ int fixPCOpcodeInstrucArm64(uint64_t pc, uint64_t lr, uint32_t instruction, uint
         imm26 = instruction & 0xFFFFFF;
         value = pc - 4*(0xffffff-imm26+1);
         target_ins = *((uint32_t *)value);
-        LOGI("%p, target_ins : %x",value, target_ins);
-
         trampoline_instructions[trampoline_pos++] = 0x5800007E; //LDR LR, 12
         trampoline_instructions[trampoline_pos++] = 0xD63F03C0; //BLR LR
         trampoline_instructions[trampoline_pos++] = 0x14000003; //B 12
@@ -372,15 +330,9 @@ int fixPCOpcodeInstrucArm64(uint64_t pc, uint64_t lr, uint32_t instruction, uint
         return 4*trampoline_pos;
     }
     else {
-        LOGI("OTHER_ARM");
         trampoline_instructions[trampoline_pos++] = instruction;
         return 4*trampoline_pos;
     }
-    //pc += sizeof(uint32_t);
-
-    //trampoline_instructions[trampoline_pos++] = 0xe51ff004;	// LDR PC, [PC, #-4]
-    //trampoline_instructions[trampoline_pos++] = lr;
-    return 4*trampoline_pos;
 }
 
 int fixPcOpcodeArm64(void* fixOpcodes,HkInfo* info){
@@ -413,17 +365,88 @@ int fixPcOpcodeArm64(void* fixOpcodes,HkInfo* info){
             return fixPos;
         }
     }
+}
+bool ChangePageProperty(void *pAddress, size_t size)
+{
+    bool bRet = false;
+    //计算包含的页数、对齐起始地址
+    unsigned long ulPageSize = sysconf(_SC_PAGESIZE); //得到页的大小
+    int iProtect = PROT_READ | PROT_WRITE | PROT_EXEC; //读写执行
 
-
+    if (true) {
+        uintptr_t start = MY_PAGE_START((uintptr_t)pAddress, ulPageSize);//(~(page_size - 1) & (addr))
+        uintptr_t end = MY_PAGE_END((uintptr_t) pAddress + size, ulPageSize);
+        LE("start=%p, end=%p, size=%p", start, end, end-start);
+        //高版本mprotect即使第二个参数size为0，也是改变一页的内存
+        int code = mprotect((void *) (start), end - start, iProtect);
+        if(code)
+        {
+            LE("mprotect error:%s", strerror(errno));
+            return bRet;
+        }
+        return true;
+    }
 }
 
-void build_olf_func(HkInfo* info) {
+HkInfo* currentInfo;
+
+void* getHookAddr(){
+    return currentInfo->hookFuncAddr;
+}
+
+
+void BuildArmJumpCode(void *pCurAddress , void *pJumpAddress, HkInfo* info){//--------------
+    LE("build arm jump code %p %p", pCurAddress,pJumpAddress)
+    //stp x1, x0, [sp, #-0x10]
+    //ldr x0, #8
+    //br x0
+    //xxxx 地址
+    //xxxxx
+    //ldur x0, [sp, #-8]
+    BYTE szLdrPCOpcodes[24] = {0xe1, 0x03, 0x3f, 0xa9, 0x40, 0x00, 0x00, 0x58, 0x00, 0x00, 0x1f, 0xd6};
+    //将目的地址拷贝到跳转指令缓存位置
+    memcpy(szLdrPCOpcodes + 12, &pJumpAddress, 8);
+    LE("build arm jump code1 %p %p %x,", pCurAddress,pJumpAddress,*(uint32_t *)pCurAddress)
+    szLdrPCOpcodes[20] = 0xE0;
+    szLdrPCOpcodes[21] = 0x83;
+    szLdrPCOpcodes[22] = 0x5F;
+    szLdrPCOpcodes[23] = 0xF8;
+    ChangePageProperty(pCurAddress,24);
+
+    /**
+     * ump   0
+2024-10-21 20:58:01.694 23895-23895 r0ysue                  com.r0ysue.inlinehook_final          E  dump   60
+2024-10-21 20:58:01.694 23895-23895 r0ysue                  com.r0ysue.inlinehook_final          E  dump   3e
+2024-10-21 20:58:01.694 23895-23895 r0ysue                  com.r0ysue.inlinehook_final          E  dump   48
+2024-10-21 20:58:01.694 23895-23895 r0ysue                  com.r0ysue.inlinehook_final          E  dump   75
+2024-10-21 20:58:01.694 23895-23895 r0ysue                  com.r0ysue.inlinehook_final          E  dump   0
+2024-10-21 20:58:01.694 23895-23895 r0ysue                  com.r0ysue.inlinehook_final          E  dump   0
+2024-10-21 20:58:01.694 23895-23895 r0ysue                  com.r0ysue.inlinehook_final          E  dump   b4
+     */
+
+    memcpy(pCurAddress, szLdrPCOpcodes, 24);
+    LE("build arm jump code2 %p %p,", pCurAddress,pJumpAddress)
+    __builtin___clear_cache((char *) pCurAddress,
+                            (char *) pCurAddress + 24);
+}
+void build_old_func(HkInfo* info) {
+    LE("build_old_func %p", info)
     void* fixOpCode = mmap(NULL,PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
     void *pNewEntryForOldFunction = NULL;
     pNewEntryForOldFunction = (char*)(info->pStubShellCodeAddr) + info->shellcodeLength;
     info->pNewEntryForOriFuncAddr = pNewEntryForOldFunction;
     int fixLength = fixPcOpcodeArm64(fixOpCode, info);
+    mprotect((void *) (info->pNewEntryForOriFuncAddr), fixLength, PROT_READ | PROT_WRITE | PROT_EXEC);
+    memcpy(pNewEntryForOldFunction, fixOpCode, fixLength);
+    BuildArmJumpCode((void*)((char*)pNewEntryForOldFunction+fixLength),(void*)((char*)info->bHookFuncAddr+24),info);
+    info->oldFuncAddr = pNewEntryForOldFunction;
+    munmap(fixOpCode,PAGE_SIZE);
+}
 
+void rebuild_hook_target(HkInfo* info){
+    LE("re build hook %p", info)
+
+    BuildArmJumpCode(info->bHookFuncAddr, info->pStubShellCodeAddr, info);
 }
 
 void hook_arm64(HkInfo *info) {
@@ -432,18 +455,18 @@ void hook_arm64(HkInfo *info) {
     if(info->hookFuncAddr){
         build_replace(info);
     }
-
+    build_old_func(info);
+    rebuild_hook_target(info);
+    LE("start hook arm64 end %p", info)
 }
 
-void hook(void *bHookFuncAddr, void (*onPreCallBack)(struct my_pt_regs *, HkInfo *pInfo),
-          void (*onCallBack)(struct my_pt_regs *, HkInfo *pInfo),
-          std::string methodName) {
+void hook_func(void *bHookFuncAddr,void* hookFuncAddr,std::string methodName) {
     auto *h_info = new HkInfo();
+    currentInfo = h_info;
     h_info->bHookFuncAddr = bHookFuncAddr;
     add(h_info);
-    h_info->onPreCallBack = onPreCallBack == nullptr ? nullptr : default_onPreCallBack;
     h_info->methodName = methodName;
-    h_info->onCallBack = onCallBack;
+    h_info->hookFuncAddr = hookFuncAddr;
     hook_arm64(h_info);
 }
 

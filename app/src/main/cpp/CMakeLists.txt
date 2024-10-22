@@ -9,6 +9,7 @@ cmake_minimum_required(VERSION 3.10.2)
 
 project("inlinehook_final")
 set(CRYPTO_LIB_NAME capstone)
+enable_language(ASM)
 add_library(${CRYPTO_LIB_NAME} SHARED IMPORTED)
 set_target_properties(${CRYPTO_LIB_NAME} PROPERTIES IMPORTED_LOCATION ${PROJECT_SOURCE_DIR}/../../../libs/lib${CRYPTO_LIB_NAME}.so)
 # Creates and names a library, sets it as either STATIC
@@ -25,7 +26,9 @@ add_library( # Sets the name of the library.
         findsobase.cpp
         findsym.cpp
              # Provides a relative path to your source file(s).
-             native-lib.cpp )
+             native-lib.cpp
+inline_hook_impl.cpp
+replace.s)
 
 # Searches for a specified prebuilt library and stores the path as a
 # variable. Because CMake includes system libraries in the search path by
